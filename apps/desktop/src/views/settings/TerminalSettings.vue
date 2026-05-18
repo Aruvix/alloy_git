@@ -147,12 +147,12 @@ const wdModes = [
           v-for="shell in shells"
           :key="shell.id"
           class="shell-option"
-          :class="{ 'shell-option--active': s.defaultShellId === shell.id || (s.defaultShellId === 'default' && shell.isDefault) }"
+          :class="{ 'shell-option--active': s.defaultShellId === shell.id }"
         >
           <input
             type="radio"
             :value="shell.id"
-            :checked="s.defaultShellId === shell.id || (s.defaultShellId === 'default' && shell.isDefault)"
+            :checked="s.defaultShellId === shell.id"
             @change="selectShell(shell.id)"
             class="sr-only"
           />

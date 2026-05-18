@@ -65,6 +65,85 @@ impl PtyManager {
 
 // ── Shell detection ───────────────────────────────────────────────────────────
 
+/// All known locations for each shell, in preference order.
+/// We collect every unique path found — so users with both system bash
+/// (/bin/bash) and Homebrew bash (/opt/homebrew/bin/bash) see both.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const UNIX_SHELLS: &[(&str, &str, &[&str], &[&str])] = &[
+    // (bin_name, display_label, login_args, extra_known_paths)
+    (
+        "zsh", "Zsh", &["-l"],
+        &["/bin/zsh", "/usr/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh"],
+    ),
+    (
+        "bash", "Bash", &["-l"],
+        &[
+            "/bin/bash",
+            "/usr/bin/bash",
+            "/usr/local/bin/bash",
+            "/opt/homebrew/bin/bash",   // Homebrew bash 5.x (macOS)
+            "/opt/local/bin/bash",      // MacPorts
+        ],
+    ),
+    (
+        "fish", "Fish", &[],
+        &[
+            "/usr/bin/fish",
+            "/usr/local/bin/fish",
+            "/opt/homebrew/bin/fish",
+            "/opt/local/bin/fish",
+        ],
+    ),
+    (
+        "sh", "Sh", &[],
+        &["/bin/sh", "/usr/bin/sh"],
+    ),
+    (
+        "dash", "Dash", &[],
+        &["/bin/dash", "/usr/bin/dash"],
+    ),
+    (
+        "ksh", "Ksh", &["-l"],
+        &["/bin/ksh", "/usr/bin/ksh", "/usr/local/bin/ksh"],
+    ),
+];
+
+/// Resolve every path at which a shell binary is installed.
+/// Strategy (in order):
+///   1. `which <bin>` — honours the user's $PATH, catches unusual installs
+///   2. All extra_known_paths for this shell — catches paths not in $PATH
+/// Deduplicates by resolved path.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn find_all_paths(bin: &str, extra_paths: &[&str]) -> Vec<(String, &'static str)> {
+    let mut found: Vec<String> = Vec::new();
+
+    // 1. `which` (may return the first match on $PATH)
+    if let Ok(out) = std::process::Command::new("which").arg(bin).output() {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !p.is_empty() && std::path::Path::new(&p).is_file() {
+                found.push(p);
+            }
+        }
+    }
+
+    // 2. Hard-coded known paths
+    for &p in extra_paths {
+        if std::path::Path::new(p).is_file() && !found.contains(&p.to_string()) {
+            found.push(p.to_string());
+        }
+    }
+
+    // Tag each with its source
+    found
+        .into_iter()
+        .map(|p| {
+            let src = if extra_paths.contains(&p.as_str()) { "known-path" } else { "system" };
+            (p, src)
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn detect_shells() -> Vec<DetectedShell> {
     let mut shells: Vec<DetectedShell> = Vec::new();
@@ -73,60 +152,48 @@ pub async fn detect_shells() -> Vec<DetectedShell> {
     {
         let platform = if cfg!(target_os = "macos") { "macos" } else { "linux" };
 
-        // Highest priority: the user's default shell from $SHELL
-        if let Ok(shell_path) = std::env::var("SHELL") {
-            if std::path::Path::new(&shell_path).exists() {
-                let bin_name = bin_name_from_path(&shell_path);
+        // Track the $SHELL default path so we can badge it correctly
+        let default_path = std::env::var("SHELL").unwrap_or_default();
+
+        for (bin, label, args, extra_paths) in UNIX_SHELLS {
+            let paths = find_all_paths(bin, extra_paths);
+            for (path, src) in paths {
+                // Skip duplicates (same path already added by an earlier shell entry)
+                if shells.iter().any(|s: &DetectedShell| s.executable_path == path) {
+                    continue;
+                }
+                let is_default = path == default_path;
+                // Display name: badge the $SHELL entry so it's obvious
+                let name = if is_default {
+                    format!("{} (default)", label)
+                } else {
+                    // If multiple paths for the same shell, show the path suffix to distinguish
+                    // e.g. "Bash  (/opt/homebrew)" vs plain "Bash"
+                    label.to_string()
+                };
+                // Stable ID: use the path so each install has its own unique entry
+                let id = path
+                    .trim_start_matches('/')
+                    .replace('/', "-");
                 shells.push(DetectedShell {
-                    id: "default".into(),
-                    name: format!("{} (default)", capitalize(&bin_name)),
-                    executable_path: shell_path.clone(),
-                    args: vec!["-l".into()],
+                    id,
+                    name,
+                    executable_path: path,
+                    args: args.iter().map(|s| s.to_string()).collect(),
                     platform: platform.into(),
-                    is_default: true,
+                    is_default,
                     is_available: true,
-                    source: "env".into(),
+                    source: src.to_string(),
                 });
             }
         }
 
-        let known: &[(&str, &str, &[&str])] = &[
-            ("zsh",  "Zsh",  &["-l"]),
-            ("bash", "Bash", &["-l"]),
-            ("fish", "Fish", &[]),
-            ("sh",   "Sh",   &[]),
-        ];
-
-        let search_dirs: &[&str] = &[
-            "/bin",
-            "/usr/bin",
-            "/usr/local/bin",
-            "/opt/homebrew/bin",
-            "/opt/local/bin",
-        ];
-
-        for (bin, label, args) in known {
-            for dir in search_dirs {
-                let path = format!("{dir}/{bin}");
-                if std::path::Path::new(&path).exists() {
-                    // Skip if this exact path is already the $SHELL default
-                    if shells.iter().any(|s| s.executable_path == path) {
-                        break;
-                    }
-                    shells.push(DetectedShell {
-                        id: format!("{}-{}", bin, dir.replace('/', "_")),
-                        name: label.to_string(),
-                        executable_path: path,
-                        args: args.iter().map(|s| s.to_string()).collect(),
-                        platform: platform.into(),
-                        is_default: false,
-                        is_available: true,
-                        source: "known-path".into(),
-                    });
-                    break; // Use first found dir for this shell
-                }
-            }
-        }
+        // Sort: default first, then alphabetically by name
+        shells.sort_by(|a, b| {
+            b.is_default
+                .cmp(&a.is_default)
+                .then_with(|| a.name.cmp(&b.name))
+        });
     }
 
     #[cfg(target_os = "windows")]
@@ -448,22 +515,6 @@ pub async fn pty_kill(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn bin_name_from_path(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("shell")
-        .to_string()
-}
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
 
 fn which_in_path(name: &str) -> bool {
     let checker = if cfg!(target_os = "windows") { "where" } else { "which" };

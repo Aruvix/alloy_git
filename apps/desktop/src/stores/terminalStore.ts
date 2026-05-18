@@ -109,9 +109,11 @@ export const useTerminalStore = defineStore("terminal", () => {
       return { path: customShellPath, args: [] };
     }
 
-    const shell = availableShells.value.find(
-      (s) => s.id === defaultShellId || (defaultShellId === "default" && s.isDefault),
-    );
+    // Match by id, or fall back to the system-default shell
+    const shell =
+      availableShells.value.find((s) => s.id === defaultShellId) ??
+      availableShells.value.find((s) => s.isDefault) ??
+      availableShells.value[0];
     if (shell) return { path: shell.executablePath, args: shell.args };
 
     // Last-resort platform fallback

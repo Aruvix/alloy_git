@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useRoute } from "vue-router";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -256,16 +257,34 @@ function clearSearch() {
 const showExternal = ref(false);
 const externalTerminals = ref<{ id: string; name: string }[]>([]);
 const openingExternal = ref<string | null>(null);
+const externalBtnRef = ref<HTMLButtonElement | null>(null);
+// Position for the fixed-position dropdown (calculated from button rect)
+const externalDropdownPos = ref({ top: "0px", right: "0px" });
+
+function toggleExternal() {
+  if (!showExternal.value && externalBtnRef.value) {
+    const rect = externalBtnRef.value.getBoundingClientRect();
+    externalDropdownPos.value = {
+      top: `${rect.bottom + 4}px`,
+      right: `${window.innerWidth - rect.right}px`,
+    };
+  }
+  showExternal.value = !showExternal.value;
+}
+
+function closeExternal() {
+  showExternal.value = false;
+}
 
 async function launchExternal(termId: string) {
-  if (!repo.value) return;
   openingExternal.value = termId;
+  // Use current repo path, or fall back to the user's home dir (empty string lets the OS decide)
+  const targetPath = repoPath.value || "";
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("open_in_terminal", { path: repoPath.value, terminalId: termId });
+    await invoke("open_in_terminal", { path: targetPath, terminalId: termId });
     showExternal.value = false;
   } catch (e) {
-    uiStore.notify("error", String(e));
+    uiStore.notify("error", `Could not open external terminal: ${e}`);
   } finally {
     openingExternal.value = null;
   }
@@ -332,6 +351,18 @@ watch(
   },
 );
 
+// Auto-close search bar and external dropdown when all sessions are gone
+watch(
+  () => terminalStore.sessions.length,
+  (count) => {
+    if (count === 0) {
+      searchOpen.value = false;
+      searchQuery.value = "";
+      showExternal.value = false;
+    }
+  },
+);
+
 // Watch for session status changes (connecting → active) to focus terminal
 watch(
   () => terminalStore.sessions.map((s) => `${s.id}:${s.status}:${s.errorMessage}`),
@@ -355,7 +386,6 @@ onMounted(async () => {
 
   // Load available system terminals for external launcher
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
     externalTerminals.value = await invoke<{ id: string; name: string }[]>("list_terminals");
   } catch {
     // Not in Tauri context
@@ -479,31 +509,50 @@ onUnmounted(() => {
 
         <!-- External terminal launcher -->
         <div class="launcher-wrap" v-if="externalTerminals.length > 0">
-          <button class="toolbar-btn" @click="showExternal = !showExternal" title="Open in external terminal">
+          <button
+            ref="externalBtnRef"
+            class="toolbar-btn"
+            :class="{ 'toolbar-btn--active': showExternal }"
+            @click="toggleExternal"
+            title="Open in external terminal"
+          >
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
                  stroke-linecap="round" stroke-linejoin="round">
               <rect x="1" y="2" width="14" height="12" rx="2"/>
               <path d="M4 6l3 2.5L4 11M8 11h4"/>
             </svg>
           </button>
-          <div class="launcher-dropdown" v-if="showExternal">
-            <button
-              v-for="t in externalTerminals"
-              :key="t.id"
-              class="launcher-item"
-              :disabled="openingExternal !== null"
-              @click="launchExternal(t.id)"
-            >
-              {{ t.name }}
-              <span v-if="openingExternal === t.id">…</span>
-            </button>
-          </div>
+
+          <!-- Teleport to body so overflow:hidden on tabbar/terminal-view can't clip it -->
+          <Teleport to="body">
+            <template v-if="showExternal">
+              <!-- Full-viewport overlay catches outside clicks -->
+              <div class="launcher-overlay" @click="closeExternal" />
+              <!-- Dropdown positioned via fixed coords calculated from button rect -->
+              <div
+                class="launcher-dropdown"
+                :style="{ top: externalDropdownPos.top, right: externalDropdownPos.right }"
+              >
+                <div class="launcher-header">Open in external terminal</div>
+                <button
+                  v-for="t in externalTerminals"
+                  :key="t.id"
+                  class="launcher-item"
+                  :disabled="openingExternal !== null"
+                  @click="launchExternal(t.id)"
+                >
+                  <span>{{ t.name }}</span>
+                  <span v-if="openingExternal === t.id" class="launcher-spinner">…</span>
+                </button>
+              </div>
+            </template>
+          </Teleport>
         </div>
       </div>
     </div>
 
-    <!-- ── Search bar ─────────────────────────────────────────────────────── -->
-    <div class="search-bar" v-if="searchOpen">
+    <!-- ── Search bar (only visible when sessions are open) ─────────────── -->
+    <div class="search-bar" v-if="searchOpen && terminalStore.sessions.length > 0">
       <input
         class="search-input"
         v-model="searchQuery"
@@ -518,10 +567,11 @@ onUnmounted(() => {
       <button class="search-btn" @click="toggleSearch" title="Close">✕</button>
     </div>
 
-    <!-- ── Terminal container ─────────────────────────────────────────────── -->
-    <div ref="containerRef" class="terminal-container" />
+    <!-- ── Terminal container (always in DOM so xterm can mount) ───────── -->
+    <div ref="containerRef" class="terminal-container"
+         v-show="terminalStore.sessions.length > 0" />
 
-    <!-- ── Empty state ───────────────────────────────────────────────────── -->
+    <!-- ── Empty state (flex sibling, never overlaps tabbar) ─────────────── -->
     <div v-if="terminalStore.sessions.length === 0" class="empty-state">
       <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5"
            stroke-linecap="round" stroke-linejoin="round" class="empty-icon">
@@ -553,6 +603,56 @@ onUnmounted(() => {
 .xterm-pane { height: 100%; width: 100%; }
 .xterm-pane .xterm { height: 100%; padding: 8px 12px; }
 .xterm-pane .xterm-viewport { background-color: transparent !important; }
+
+/* ── Teleported external-terminal dropdown (body-level, not scoped) ── */
+
+/* Full-viewport transparent overlay — catches outside clicks */
+.launcher-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: transparent;
+}
+
+.launcher-dropdown {
+  position: fixed;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  min-width: 190px;
+  z-index: 9999;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.launcher-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 10px 4px;
+}
+
+.launcher-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 80ms, color 80ms;
+}
+.launcher-item:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.launcher-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.launcher-spinner { font-size: 11px; color: var(--text-muted); }
 </style>
 
 <style scoped>
@@ -562,6 +662,7 @@ onUnmounted(() => {
   height: 100%;
   overflow: hidden;
   background: var(--surface-0);
+  /* position: relative kept only for the kill-confirm dialog overlay */
   position: relative;
 }
 
@@ -781,45 +882,14 @@ onUnmounted(() => {
   position: relative;
 }
 
-/* ── Launcher dropdown ── */
+/* ── Launcher wrap (scoped — just the anchor) ── */
 .launcher-wrap { position: relative; }
 
-.launcher-dropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 4px;
-  min-width: 150px;
-  z-index: 50;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-}
-
-.launcher-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 6px 10px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: background 80ms, color 80ms;
-}
-.launcher-item:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
-.launcher-item:disabled { opacity: 0.5; cursor: not-allowed; }
-
 /* ── Empty state ── */
+/* flex: 1 fills remaining space below tabbar; never covers the tabbar */
 .empty-state {
-  position: absolute;
-  inset: 0;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
