@@ -3,6 +3,7 @@ const navItems = [
   { path: "/settings/accounts", label: "Accounts" },
   { path: "/settings/git", label: "Git Config" },
   { path: "/settings/appearance", label: "Appearance" },
+  { path: "/settings/terminal", label: "Terminal" },
 ];
 </script>
 

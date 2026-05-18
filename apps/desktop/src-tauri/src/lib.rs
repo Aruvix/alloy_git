@@ -1,6 +1,7 @@
 mod crypto;
 mod git;
 mod repository;
+mod terminal;
 
 pub fn run() {
     tauri::Builder::default()
@@ -13,6 +14,7 @@ pub fn run() {
                 .add_migrations("sqlite:alloy.db", repository::migrations())
                 .build(),
         )
+        .manage(terminal::PtyManager::new())
         .invoke_handler(tauri::generate_handler![
             // Git core
             git::git_status,
@@ -64,10 +66,16 @@ pub fn run() {
             git::git_worktree_list,
             git::git_worktree_add,
             git::git_worktree_remove,
-            // Terminal passthrough
+            // Legacy terminal passthrough (kept for backwards compat)
             git::git_terminal_run,
             git::list_terminals,
             git::open_in_terminal,
+            // PTY terminal — real interactive shell sessions
+            terminal::detect_shells,
+            terminal::pty_create,
+            terminal::pty_write,
+            terminal::pty_resize,
+            terminal::pty_kill,
             // GitHub CLI
             git::github_cli_token,
             // Credential vault

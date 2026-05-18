@@ -107,6 +107,11 @@ export const router = createRouter({
           name: "settings-appearance",
           component: () => import("../views/settings/AppearanceSettings.vue"),
         },
+        {
+          path: "terminal",
+          name: "settings-terminal",
+          component: () => import("../views/settings/TerminalSettings.vue"),
+        },
       ],
     },
   ],
