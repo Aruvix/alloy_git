@@ -475,3 +475,11 @@ OS (macOS / Windows / Linux)
 ```
 
 **Layering rule:** components never call `invoke()` directly. All Tauri commands are wrapped in the `gitApi` service (`packages/git-core/src/service.ts`), which is consumed by Pinia stores. Components only read store state and call store actions. Provider API calls are isolated in `packages/provider-core` with no Tauri dependency, so they can be tested independently.
+
+---
+
+## Author
+
+**Amrishkhan Sheik Abdullah**
+- Portfolio: [amrishkhan.dev](https://amrishkhan.dev)
+- Email: amrishkhansheikabdullah@gmail.com

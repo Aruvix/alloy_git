@@ -2,6 +2,7 @@
   "name": "alloy-git",
   "private": true,
   "version": "0.1.0",
+  "author": "Amrishkhan Sheik Abdullah <amrishkhansheikabdullah@gmail.com> (https://amrishkhan.dev)",
   "scripts": {
     "dev": "pnpm --filter @alloy/desktop tauri dev",
     "build": "pnpm --filter @alloy/desktop tauri build",
