@@ -10,10 +10,11 @@ pub struct RepoValidation {
 }
 
 pub fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "create_initial_tables",
-        sql: r#"
+    vec![
+        Migration {
+            version: 1,
+            description: "create_initial_tables",
+            sql: r#"
             CREATE TABLE IF NOT EXISTS local_repositories (
                 id TEXT PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
@@ -101,8 +102,20 @@ pub fn migrations() -> Vec<Migration> {
                 secret_scan_mode TEXT NOT NULL DEFAULT 'warn'
             );
         "#,
-        kind: tauri_plugin_sql::MigrationKind::Up,
-    }]
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "add_local_repository_remote_metadata",
+            sql: r#"
+            ALTER TABLE local_repositories ADD COLUMN workspace_id TEXT;
+            ALTER TABLE local_repositories ADD COLUMN provider TEXT;
+            ALTER TABLE local_repositories ADD COLUMN remote_url TEXT;
+            ALTER TABLE local_repositories ADD COLUMN is_local_only INTEGER NOT NULL DEFAULT 0;
+        "#,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+    ]
 }
 
 #[tauri::command]

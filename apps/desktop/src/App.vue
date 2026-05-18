@@ -2,11 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { gitApi } from "@alloy/git-core";
+import { providerLabel } from "@alloy/provider-core";
 import { useRepoStore } from "./stores/repoStore.js";
-import { useAccountStore } from "./stores/accountStore.js";
+import { useGitAccountsStore } from "./stores/accountStore.js";
 import { useGitStatusStore } from "./stores/gitStatusStore.js";
 import { useGitBranchStore } from "./stores/gitBranchStore.js";
 import { useUiStore } from "./stores/uiStore.js";
+import { useAppBootstrapStore } from "./stores/appBootstrapStore.js";
 import AppSidebar from "./components/AppSidebar.vue";
 import AddRepositoryModal from "./components/AddRepositoryModal.vue";
 import Notification from "./components/ui/Notification.vue";
@@ -14,23 +16,20 @@ import ResizableSplitter from "./components/ui/ResizableSplitter.vue";
 
 const router = useRouter();
 const repoStore = useRepoStore();
-const accountStore = useAccountStore();
+const accountStore = useGitAccountsStore();
 const statusStore = useGitStatusStore();
 const branchStore = useGitBranchStore();
 const uiStore = useUiStore();
+const bootstrapStore = useAppBootstrapStore();
 const paletteOpen = ref(false);
 const paletteQuery = ref("");
 const fetchingAll = ref(false);
-const bootstrapping = ref(true);
 
 onMounted(async () => {
   uiStore.applyTheme();
-  try {
-    await Promise.all([repoStore.load(), accountStore.load()]);
-  } catch {
-    uiStore.notify("warning", "Repository data is unavailable in this browser preview. Open the Tauri app for live repository data.");
-  } finally {
-    bootstrapping.value = false;
+  await bootstrapStore.bootstrap();
+  if (bootstrapStore.state.warnings.length > 0) {
+    uiStore.notify("warning", "Some saved workspace data could not be loaded. You can still use Alloy and retry from Settings.");
   }
   window.addEventListener("keydown", handleKeydown);
 });
@@ -38,6 +37,14 @@ onMounted(async () => {
 onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
 
 const activeRepo = computed(() => repoStore.activeRepo);
+const groupedAccounts = computed(() => {
+  const groups = new Map<string, typeof accountStore.accounts>();
+  for (const account of accountStore.accounts) {
+    const label = providerLabel(account.provider);
+    groups.set(label, [...(groups.get(label) ?? []), account]);
+  }
+  return [...groups.entries()].map(([label, accounts]) => ({ label, accounts }));
+});
 
 const selectedAccountId = computed({
   get: () => uiStore.repositoryScope.type === "account" ? uiStore.repositoryScope.id : uiStore.repositoryScope.type,
@@ -45,7 +52,7 @@ const selectedAccountId = computed({
     uiStore.setRepositoryScope(id === "local" ? { type: "local" } : id === "all" ? { type: "all" } : { type: "account", id });
     if (repoStore.activeRepo && id !== "all") {
       const activeVisible = id === "local"
-        ? !repoStore.activeRepo.linkedAccountId
+        ? repoStore.activeRepo.isLocalOnly === true
         : repoStore.activeRepo.linkedAccountId === id;
       if (!activeVisible) router.push("/");
     }
@@ -116,6 +123,10 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 async function fetchAll() {
+  if (bootstrapStore.state.isBooting) {
+    uiStore.notify("info", "Preparing workspace...");
+    await bootstrapStore.waitUntilReady();
+  }
   if (!activeRepo.value) {
     uiStore.notify("info", "Select a repository first");
     return;
@@ -134,6 +145,7 @@ async function fetchAll() {
 }
 
 async function runGit(action: "fetch" | "pull" | "push") {
+  await bootstrapStore.waitUntilReady();
   if (!activeRepo.value) return;
   const repo = activeRepo.value;
   const result = action === "fetch"
@@ -174,14 +186,18 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
             v-model="selectedAccountId"
             class="account-switcher"
             title="Switch account scope"
-            :disabled="bootstrapping"
+            :disabled="bootstrapStore.state.isBooting && !bootstrapStore.state.accountsLoaded"
           >
-            <option v-if="bootstrapping" value="all">Loading accounts…</option>
+            <option v-if="bootstrapStore.state.isBooting && !bootstrapStore.state.accountsLoaded" value="all">Loading accounts...</option>
             <template v-else>
               <option value="all">All Accounts</option>
-              <option v-for="account in accountStore.accounts" :key="account.id" :value="account.id">
-                {{ account.name }}{{ account.username ? ` - ${account.username}` : "" }}
-              </option>
+              <option v-if="!accountStore.loaded && bootstrapStore.state.warnings.length > 0" value="all">Accounts unavailable</option>
+              <option v-else-if="accountStore.accounts.length === 0" value="all">Connect Git Account</option>
+              <optgroup v-for="group in groupedAccounts" :key="group.label" :label="group.label">
+                <option v-for="account in group.accounts" :key="account.id" :value="account.id">
+                  {{ account.name }}{{ account.username ? ` - ${account.username}` : "" }}
+                </option>
+              </optgroup>
               <option value="local">Local Only</option>
             </template>
           </select>
@@ -203,7 +219,7 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
         <button
           class="top-btn"
           :class="{ loading: fetchingAll }"
-          :disabled="fetchingAll"
+          :disabled="fetchingAll || bootstrapStore.state.isBooting"
           @click="fetchAll"
           title="Fetch all remotes"
         >
@@ -229,7 +245,7 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
 
     <!-- ── Body: Sidebar + Main ─────────────────────────────────────────── -->
     <div class="app-body">
-      <AppSidebar :loading="bootstrapping" />
+      <AppSidebar :loading="bootstrapStore.state.isBooting && !bootstrapStore.state.repositoriesLoaded" />
       <ResizableSplitter
         v-if="!uiStore.sidebarCollapsed"
         :min="200"
@@ -237,16 +253,14 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
         @resize-end="uiStore.sidebarWidth = $event"
       />
       <main class="app-main">
-        <div v-if="bootstrapping" class="bootstrap-state">
-          <div class="bootstrap-card">
-            <span class="bootstrap-spinner" />
-            <div>
-              <h2>Loading workspace</h2>
-              <p>Reading accounts, repositories, and workspace settings…</p>
-            </div>
-          </div>
+        <div v-if="bootstrapStore.state.isBooting" class="bootstrap-banner">
+          <span class="bootstrap-spinner" />
+          <span>{{ bootstrapStore.currentStep }}</span>
         </div>
-        <RouterView v-else />
+        <div v-else-if="bootstrapStore.state.warnings.length > 0" class="bootstrap-banner warning">
+          <span>Saved workspace data could not be fully loaded. Settings and repository actions remain available.</span>
+        </div>
+        <RouterView />
       </main>
     </div>
 
@@ -454,36 +468,23 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
   flex-direction: column;
   overflow: hidden;
 }
-.bootstrap-state {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  background: var(--surface-0);
-}
-.bootstrap-card {
+.bootstrap-banner {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-width: 300px;
-  padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
   background: var(--surface-1);
-}
-.bootstrap-card h2 {
-  margin: 0 0 4px;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 650;
-}
-.bootstrap-card p {
-  margin: 0;
   color: var(--text-muted);
   font-size: 12px;
+  flex-shrink: 0;
+}
+.bootstrap-banner.warning {
+  color: var(--warning, #d29922);
 }
 .bootstrap-spinner {
-  width: 18px;
-  height: 18px;
+  width: 12px;
+  height: 12px;
   border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;

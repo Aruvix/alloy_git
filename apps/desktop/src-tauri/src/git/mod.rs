@@ -556,14 +556,30 @@ pub async fn git_push(
     branch: Option<String>,
     force: bool,
 ) -> Result<GitCommandOutput, String> {
-    let mut args = vec!["push"];
     let remote_str = remote.as_deref().unwrap_or("origin");
-    let branch_str = branch.as_deref().unwrap_or("HEAD");
+
+    // Resolve the branch to push to an explicit name rather than the symbolic HEAD.
+    // Using HEAD directly fails with push.default=simple when no upstream tracking
+    // branch is configured, even if the remote branch already exists.
+    let resolved_branch = match branch {
+        Some(ref b) => b.clone(),
+        None => current_branch_name(&workspace_path)?,
+    };
+
+    // Mirror git_pull's smart upstream logic: add --set-upstream when the current
+    // branch has no remote tracking ref, so that ahead/behind counts work afterward.
+    let needs_upstream = current_upstream_name(&workspace_path).is_none();
+
+    let mut args: Vec<&str> = vec!["push"];
+    if needs_upstream {
+        args.push("--set-upstream");
+    }
     args.push(remote_str);
-    args.push(branch_str);
+    args.push(&resolved_branch);
     if force {
         args.push("--force-with-lease");
     }
+
     run_git_checked(&workspace_path, &args)
 }
 
@@ -787,11 +803,19 @@ pub async fn git_list_branches(workspace_path: String) -> Result<Vec<GitBranch>,
     let current = run_git(&workspace_path, &["branch", "--show-current"])
         .map(|o| o.stdout.trim().to_string())
         .unwrap_or_default();
-    let default_branch = run_git(&workspace_path, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-        .ok()
-        .and_then(|o| o.stdout.trim().strip_prefix("origin/").map(|s| s.to_string()))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "main".to_string());
+    let default_branch = run_git(
+        &workspace_path,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .ok()
+    .and_then(|o| {
+        o.stdout
+            .trim()
+            .strip_prefix("origin/")
+            .map(|s| s.to_string())
+    })
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| "main".to_string());
     let local = run_git(
         &workspace_path,
         &[
@@ -809,13 +833,23 @@ pub async fn git_list_branches(workspace_path: String) -> Result<Vec<GitBranch>,
             return (0, 0, "no_upstream".to_string());
         };
         let range = format!("{}...{}", name, upstream_name);
-        let output = run_git(&workspace_path, &["rev-list", "--left-right", "--count", &range]).ok();
+        let output = run_git(
+            &workspace_path,
+            &["rev-list", "--left-right", "--count", &range],
+        )
+        .ok();
         let Some(output) = output else {
             return (0, 0, "no_upstream".to_string());
         };
         let mut parts = output.stdout.split_whitespace();
-        let ahead = parts.next().and_then(|p| p.parse::<i32>().ok()).unwrap_or(0);
-        let behind = parts.next().and_then(|p| p.parse::<i32>().ok()).unwrap_or(0);
+        let ahead = parts
+            .next()
+            .and_then(|p| p.parse::<i32>().ok())
+            .unwrap_or(0);
+        let behind = parts
+            .next()
+            .and_then(|p| p.parse::<i32>().ok())
+            .unwrap_or(0);
         let status = match (ahead, behind) {
             (0, 0) => "up_to_date",
             (_, 0) => "ahead",
@@ -825,9 +859,8 @@ pub async fn git_list_branches(workspace_path: String) -> Result<Vec<GitBranch>,
         (ahead, behind, status.to_string())
     };
 
-    let branch_leaf = |name: &str| -> String {
-        name.rsplit('/').next().unwrap_or(name).to_string()
-    };
+    let branch_leaf =
+        |name: &str| -> String { name.rsplit('/').next().unwrap_or(name).to_string() };
 
     let mut branches: Vec<GitBranch> = local
         .stdout
@@ -853,12 +886,27 @@ pub async fn git_list_branches(workspace_path: String) -> Result<Vec<GitBranch>,
                 upstream,
                 ahead,
                 behind,
-                last_commit_hash: parts.get(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-                last_commit_message: parts.get(3).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-                last_commit_author: parts.get(4).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-                last_commit_date: parts.get(5).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                last_commit_hash: parts
+                    .get(2)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+                last_commit_message: parts
+                    .get(3)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+                last_commit_author: parts
+                    .get(4)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+                last_commit_date: parts
+                    .get(5)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
                 status,
-                last_used_at: parts.get(5).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                last_used_at: parts
+                    .get(5)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             }
         })
         .collect();
@@ -884,16 +932,33 @@ pub async fn git_list_branches(workspace_path: String) -> Result<Vec<GitBranch>,
             is_current: false,
             is_remote: true,
             is_default: name == format!("origin/{default_branch}"),
-            is_protected: name == format!("origin/{default_branch}") || name.ends_with("/main") || name.ends_with("/master"),
+            is_protected: name == format!("origin/{default_branch}")
+                || name.ends_with("/main")
+                || name.ends_with("/master"),
             upstream: None,
             ahead: 0,
             behind: 0,
-            last_commit_hash: parts.get(1).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-            last_commit_message: parts.get(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-            last_commit_author: parts.get(3).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-            last_commit_date: parts.get(4).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+            last_commit_hash: parts
+                .get(1)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+            last_commit_message: parts
+                .get(2)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+            last_commit_author: parts
+                .get(3)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+            last_commit_date: parts
+                .get(4)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
             status: "up_to_date".to_string(),
-            last_used_at: parts.get(4).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+            last_used_at: parts
+                .get(4)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
         });
     }
     Ok(branches)
@@ -1167,7 +1232,9 @@ pub async fn git_merge(
 ) -> Result<GitCommandOutput, String> {
     match strategy.as_deref() {
         Some("squash") => run_git_checked(&workspace_path, &["merge", "--squash", &branch]),
-        Some("fast_forward_only") => run_git_checked(&workspace_path, &["merge", "--ff-only", &branch]),
+        Some("fast_forward_only") => {
+            run_git_checked(&workspace_path, &["merge", "--ff-only", &branch])
+        }
         _ => run_git_checked(&workspace_path, &["merge", &branch]),
     }
 }

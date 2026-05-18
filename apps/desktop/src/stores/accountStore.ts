@@ -1,113 +1,52 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import Database from "@tauri-apps/plugin-sql";
 import { generateId } from "@alloy/shared";
 import { getProviderClient, parseRemoteWithProviders } from "@alloy/provider-core";
 import { DEFAULT_GLOBAL_GIT_CONFIG, normalizeGlobalGitConfig, repositoriesForAccount as filterRepositoriesForAccount } from "@alloy/git-core";
 import type { GitAccount, GitProvider, GitCredentialType, GitRepository, GlobalGitConfig } from "@alloy/git-core";
-
-let db: Awaited<ReturnType<typeof Database.load>> | null = null;
-let schemaReady = false;
-async function getDb() {
-  if (!db) db = await Database.load("sqlite:alloy.db");
-  if (!schemaReady) {
-    await ensureSchema(db);
-    schemaReady = true;
-  }
-  return db;
-}
-
-async function ensureSchema(database: Awaited<ReturnType<typeof Database.load>>) {
-  await database.execute(`
-    CREATE TABLE IF NOT EXISTS cloud_repositories (
-      id TEXT NOT NULL,
-      git_account_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      repo_name TEXT NOT NULL,
-      repo_full_name TEXT NOT NULL,
-      owner TEXT,
-      remote_url TEXT NOT NULL,
-      ssh_remote_url TEXT,
-      web_url TEXT,
-      default_branch TEXT NOT NULL,
-      visibility TEXT NOT NULL DEFAULT 'unknown',
-      local_path TEXT,
-      last_synced_at TEXT,
-      updated_at TEXT,
-      PRIMARY KEY (id, git_account_id)
-    )
-  `);
-  await database.execute(`
-    CREATE TABLE IF NOT EXISTS provider_metadata (
-      provider TEXT NOT NULL,
-      remote_base_url TEXT NOT NULL DEFAULT '',
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (provider, remote_base_url)
-    )
-  `);
-  await database.execute(`
-    CREATE TABLE IF NOT EXISTS workspace_indexes (
-      id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      source TEXT NOT NULL,
-      payload_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL
-    )
-  `);
-  try {
-    await database.execute("ALTER TABLE global_git_config ADD COLUMN default_repository_id TEXT");
-  } catch {
-    // Column already exists in fresh databases.
-  }
-  for (const statement of [
-    "ALTER TABLE cloud_repositories ADD COLUMN owner TEXT",
-    "ALTER TABLE cloud_repositories ADD COLUMN ssh_remote_url TEXT",
-    "ALTER TABLE cloud_repositories ADD COLUMN web_url TEXT",
-    "ALTER TABLE cloud_repositories ADD COLUMN updated_at TEXT",
-  ]) {
-    try {
-      await database.execute(statement);
-    } catch {
-      // Column already exists in fresh databases.
-    }
-  }
-}
+import { getDb } from "./db.js";
 
 export const useAccountStore = defineStore("account", () => {
   const accounts = ref<GitAccount[]>([]);
   const repositories = ref<GitRepository[]>([]);
   const globalConfig = ref<GlobalGitConfig>({ ...DEFAULT_GLOBAL_GIT_CONFIG });
   const loading = ref(false);
+  const loaded = ref(false);
 
   async function load() {
-    const d = await getDb();
-    const rows = await d.select<GitAccount[]>(
-      `SELECT id, name, provider, username, email, remote_base_url as remoteBaseUrl,
-       auth_type as authType, ssh_key_path as sshKeyPath,
-       use_system_credentials as useSystemCredentials, avatar_url as avatarUrl,
-       status, validation_message as validationMessage, scopes, repository_count as repositoryCount,
-       last_authenticated_at as lastAuthenticatedAt, created_at as createdAt, updated_at as updatedAt
-       FROM git_accounts ORDER BY created_at DESC`,
-    );
-    accounts.value = rows.map((r) => ({
-      ...r,
-      useSystemCredentials: Boolean(r.useSystemCredentials),
-      scopes: r.scopes ? JSON.parse(r.scopes as unknown as string) : undefined,
-    }));
+    loading.value = true;
+    try {
+      const d = await getDb();
+      const rows = await d.select<GitAccount[]>(
+        `SELECT id, name, provider, username, email, remote_base_url as remoteBaseUrl,
+         auth_type as authType, ssh_key_path as sshKeyPath,
+         use_system_credentials as useSystemCredentials, avatar_url as avatarUrl,
+         status, validation_message as validationMessage, scopes, repository_count as repositoryCount,
+         last_authenticated_at as lastAuthenticatedAt, created_at as createdAt, updated_at as updatedAt
+         FROM git_accounts ORDER BY created_at DESC`,
+      );
+      accounts.value = rows.map((r) => ({
+        ...r,
+        useSystemCredentials: Boolean(r.useSystemCredentials),
+        scopes: r.scopes ? JSON.parse(r.scopes as unknown as string) : undefined,
+      }));
 
-    const repoRows = await d.select<GitRepository[]>(
-      `SELECT id, git_account_id as gitAccountId, provider, repo_name as repoName,
-       repo_full_name as repoFullName, owner, remote_url as remoteUrl,
-       ssh_remote_url as sshRemoteUrl, web_url as webUrl,
-       default_branch as defaultBranch, visibility, local_path as localPath,
-       last_synced_at as lastSyncedAt, updated_at as updatedAt
-       FROM cloud_repositories ORDER BY repo_full_name`,
-    );
-    repositories.value = repoRows;
-    await loadGlobalConfig();
-    await normalizeGlobalConfig();
+      const repoRows = await d.select<GitRepository[]>(
+        `SELECT id, git_account_id as gitAccountId, provider, repo_name as repoName,
+         repo_full_name as repoFullName, owner, remote_url as remoteUrl,
+         ssh_remote_url as sshRemoteUrl, web_url as webUrl,
+         default_branch as defaultBranch, visibility, local_path as localPath,
+         last_synced_at as lastSyncedAt, updated_at as updatedAt
+         FROM cloud_repositories ORDER BY repo_full_name`,
+      );
+      repositories.value = repoRows;
+      await loadGlobalConfig();
+      await normalizeGlobalConfig();
+      loaded.value = true;
+    } finally {
+      loading.value = false;
+    }
   }
 
   async function loadGlobalConfig() {
@@ -363,6 +302,7 @@ export const useAccountStore = defineStore("account", () => {
     repositories,
     globalConfig,
     loading,
+    loaded,
     load,
     loadGlobalConfig,
     saveGlobalConfig,
@@ -379,6 +319,8 @@ export const useAccountStore = defineStore("account", () => {
     bestCloneUrl,
   };
 });
+
+export const useGitAccountsStore = useAccountStore;
 
 function trimUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");

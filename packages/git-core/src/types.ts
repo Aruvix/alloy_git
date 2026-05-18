@@ -64,6 +64,10 @@ export interface LocalRepository {
   name: string;
   linkedRemoteId?: string;
   linkedAccountId?: string;
+  workspaceId?: string;
+  provider?: GitProvider;
+  remoteUrl?: string;
+  isLocalOnly?: boolean;
   addedAt: string;
   lastOpenedAt?: string;
   isFavorite?: boolean;

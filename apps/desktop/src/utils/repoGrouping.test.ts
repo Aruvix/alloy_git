@@ -59,7 +59,7 @@ describe("repo grouping", () => {
     ];
 
     expect(filterRepositoriesForScope(scopedRepos, { type: "account", id: "account-a" }).map((repo) => repo.id)).toEqual(["linked"]);
-    expect(filterRepositoriesForScope(scopedRepos, { type: "local" }).map((repo) => repo.id)).toEqual(["local-only", "unknown-remote"]);
+    expect(filterRepositoriesForScope(scopedRepos, { type: "local" }).map((repo) => repo.id)).toEqual(["local-only"]);
   });
 });
 
@@ -70,6 +70,8 @@ function localRepo(id: string, name: string, linkedAccountId?: string, linkedRem
     path: `/tmp/${name}`,
     linkedAccountId,
     linkedRemoteId,
+    remoteUrl: linkedRemoteId ? `https://github.com/acme/${name}.git` : undefined,
+    isLocalOnly: !linkedAccountId && !linkedRemoteId,
     addedAt: "2026-01-01T00:00:00.000Z",
   };
 }

@@ -35,7 +35,7 @@ const filteredRepos = computed(() => {
   if (scope.type === "account") {
     repos = repos.filter((r) => r.linkedAccountId === scope.id);
   } else if (scope.type === "local") {
-    repos = repos.filter((r) => !r.linkedAccountId);
+    repos = repos.filter((r) => r.isLocalOnly === true);
   }
   if (!q) return repos;
   return repos.filter((r) => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q));
@@ -60,7 +60,7 @@ function repoDot(repo: typeof repoStore.repos[0]): "blue" | "green" | "orange" |
   if (isActiveRepo(repo.id)) return "blue";
   const status = repo.id === repoStore.activeRepoId ? statusStore.status : null;
   if (status?.conflictedFiles?.length) return "red";
-  if (!repo.linkedAccountId) return "gray";
+  if (!repo.linkedAccountId) return repo.isLocalOnly ? "gray" : "orange";
   if (status && (status.behind > 0 || status.changes.length > 0)) return "orange";
   return "green";
 }
@@ -76,13 +76,16 @@ function repoStatusText(repo: typeof repoStore.repos[0]): string {
     if (s.changes.length > 0) parts.push(`${s.changes.length} changed`);
     return parts.join(" · ") || `${s.branch ?? "main"} · up to date`;
   }
-  if (!repo.linkedAccountId) return "no remote";
-  return `${viewByRepoId.value.get(repo.id)?.branchLabel ?? "main"} · up to date`;
+  if (!repo.linkedAccountId && repo.isLocalOnly) return "no remote";
+  const view = viewByRepoId.value.get(repo.id);
+  if (!view?.account) return "resolving account…";
+  return `${view.branchLabel ?? "main"} · up to date`;
 }
 
 function groupEyebrow(kind: string) {
   if (kind === "organization") return "ORGANIZATION";
   if (kind === "personal") return "PERSONAL";
+  if (kind === "unmapped") return "REMOTE";
   return "LOCAL ONLY";
 }
 </script>
@@ -171,7 +174,7 @@ function groupEyebrow(kind: string) {
           @click="uiStore.setRepositoryScope({ type: 'local' })"
         >
           <span class="quick-link-label">Local Only</span>
-          <span class="quick-link-count">{{ repoStore.repos.filter((repo) => !repo.linkedAccountId).length }}</span>
+          <span class="quick-link-count">{{ repoStore.repos.filter((repo) => repo.isLocalOnly === true).length }}</span>
         </button>
       </div>
 

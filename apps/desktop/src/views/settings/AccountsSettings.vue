@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { useAccountStore } from "../../stores/accountStore.js";
+import { computed, onMounted, ref, watch } from "vue";
+import { useGitAccountsStore } from "../../stores/accountStore.js";
 import { useUiStore } from "../../stores/uiStore.js";
 import { getProviderCapabilities, providerLabel, providerAuthHelp, isProviderValidationSupported } from "@alloy/provider-core";
 import Button from "../../components/ui/Button.vue";
 import type { GitProvider, GitCredentialType } from "@alloy/git-core";
 
-const accountStore = useAccountStore();
+const accountStore = useGitAccountsStore();
 const uiStore = useUiStore();
+const accountLoadError = ref("");
 
 const showForm = ref(false);
 const validating = ref(false);
@@ -60,6 +61,18 @@ const repositoryCountByAccount = computed(() => {
     counts.set(repo.gitAccountId, (counts.get(repo.gitAccountId) ?? 0) + 1);
   }
   return counts;
+});
+const accountsPending = computed(() => accountStore.loading || (!accountStore.loaded && !accountLoadError.value));
+
+onMounted(async () => {
+  if (accountStore.loaded || accountStore.loading) return;
+  try {
+    accountLoadError.value = "";
+    await accountStore.load();
+  } catch (e) {
+    accountLoadError.value = String(e);
+    uiStore.notify("error", accountLoadError.value);
+  }
 });
 
 async function addAccount() {
@@ -175,8 +188,13 @@ async function remove(id: string) {
     </div>
 
     <div class="accounts-list">
-      <div v-if="accountStore.accounts.length === 0" class="empty">No accounts added yet.</div>
-      <div v-for="acc in accountStore.accounts" :key="acc.id" class="account-card">
+      <div v-if="accountsPending" class="accounts-loading">
+        <div class="skeleton-row" />
+        <div class="skeleton-row short" />
+      </div>
+      <div v-else-if="!accountStore.loaded" class="empty">Accounts unavailable. Try refreshing this page.</div>
+      <div v-else-if="accountStore.accounts.length === 0" class="empty">Connect Git Account</div>
+      <div v-for="acc in accountStore.loaded ? accountStore.accounts : []" :key="acc.id" class="account-card">
         <div class="account-avatar" :class="acc.status">
           {{ (acc.username ?? acc.name)[0]?.toUpperCase() }}
         </div>
@@ -239,6 +257,19 @@ h2 { font-size: 16px; font-weight: 600; color: var(--text); margin: 0; }
 .form-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .accounts-list { display: flex; flex-direction: column; gap: 10px; }
 .empty { font-size: 13px; color: var(--text-muted); }
+.accounts-loading { display: flex; flex-direction: column; gap: 10px; }
+.skeleton-row {
+  height: 62px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-1), var(--surface-2), var(--surface-1));
+  background-size: 180% 100%;
+  animation: shimmer 1.15s ease-in-out infinite;
+}
+.skeleton-row.short { width: 72%; }
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
 .account-card {
   display: flex;
   align-items: center;

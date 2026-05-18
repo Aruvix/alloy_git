@@ -23,12 +23,12 @@ const linkedCloudRepo = computed(() => accountStore.repositories.find((repo) =>
   repo.gitAccountId === props.repo.linkedAccountId && repo.id === props.repo.linkedRemoteId,
 ) ?? null);
 const visibility = computed(() => {
-  if (!props.repo.linkedAccountId) return "Local";
+  if (!props.repo.linkedAccountId) return props.repo.isLocalOnly ? "Local" : "Resolving";
   const value = linkedCloudRepo.value?.visibility;
   return value && value !== "unknown" ? value[0].toUpperCase() + value.slice(1) : "Private";
 });
-const remoteUrl = computed(() => linkedCloudRepo.value?.webUrl || linkedCloudRepo.value?.remoteUrl || props.repo.path);
-const orgLabel = computed(() => linkedCloudRepo.value?.owner || linkedAccount.value?.name || "Local Only");
+const remoteUrl = computed(() => linkedCloudRepo.value?.webUrl || linkedCloudRepo.value?.remoteUrl || props.repo.remoteUrl || props.repo.path);
+const orgLabel = computed(() => linkedCloudRepo.value?.owner || linkedAccount.value?.name || (props.repo.isLocalOnly ? "Local Only" : "Resolving account"));
 const syncText = computed(() => {
   if (!props.status) return "Checking status";
   const parts: string[] = [];

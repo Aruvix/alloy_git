@@ -6,7 +6,7 @@ export interface RepoOwnerGroup {
   label: string;
   subtitle?: string;
   accountId?: string | null;
-  kind: "organization" | "personal" | "local";
+  kind: "organization" | "personal" | "local" | "unmapped";
   repos: LocalRepository[];
 }
 
@@ -32,7 +32,7 @@ export function filterRepositoriesForScope(repos: LocalRepository[], scope: Repo
     case "account":
       return repos.filter((repo) => repo.linkedAccountId === scope.id);
     case "local":
-      return repos.filter((repo) => !repo.linkedAccountId);
+      return repos.filter((repo) => repo.isLocalOnly === true);
     case "all":
     default:
       return repos;
@@ -57,9 +57,9 @@ export function groupRepositoriesByOwner(
       ? cloudByAccountAndId.get(`${repo.linkedAccountId}:${repo.linkedRemoteId}`)
       : null;
     const organization = cloudRepo?.owner && cloudRepo.owner !== account?.username ? cloudRepo.owner : "";
-    const kind: RepoOwnerGroup["kind"] = account ? (organization ? "organization" : "personal") : "local";
-    const label = account ? (organization || "Personal") : "Local Only";
-    const key = account ? `${kind}:${account.id}:${organization || "personal"}` : "local";
+    const kind: RepoOwnerGroup["kind"] = account ? (organization ? "organization" : "personal") : repo.isLocalOnly ? "local" : "unmapped";
+    const label = account ? (organization || "Personal") : repo.isLocalOnly ? "Local Only" : "Unmapped Remotes";
+    const key = account ? `${kind}:${account.id}:${organization || "personal"}` : kind;
     const group = groups.get(key) ?? {
       key,
       label,
@@ -75,8 +75,10 @@ export function groupRepositoriesByOwner(
   return [...groups.values()].sort((a, b) => {
     if (a.kind === "organization" && b.kind !== "organization") return -1;
     if (b.kind === "organization" && a.kind !== "organization") return 1;
-    if (a.kind === "personal" && b.kind === "local") return -1;
-    if (b.kind === "personal" && a.kind === "local") return 1;
+    if (a.kind === "personal" && (b.kind === "local" || b.kind === "unmapped")) return -1;
+    if (b.kind === "personal" && (a.kind === "local" || a.kind === "unmapped")) return 1;
+    if (a.kind === "unmapped" && b.kind === "local") return -1;
+    if (b.kind === "unmapped" && a.kind === "local") return 1;
     if (a.kind === "local") return 1;
     if (b.kind === "local") return -1;
     return a.label.localeCompare(b.label);
@@ -99,13 +101,13 @@ export function buildRepositoryViewModels(
     const cloudRepository = repo.linkedAccountId && repo.linkedRemoteId
       ? cloudByAccountAndId.get(`${repo.linkedAccountId}:${repo.linkedRemoteId}`) ?? null
       : null;
-    const mapping = repo.linkedAccountId ? "linked" : repo.linkedRemoteId ? "needs-setup" : "local";
+    const mapping = repo.linkedAccountId ? "linked" : repo.isLocalOnly ? "local" : "needs-setup";
     return {
       repo,
       account,
       cloudRepository,
       mapping,
-      providerLabel: account ? providerTitle(account.provider) : cloudRepository ? providerTitle(cloudRepository.provider) : "Local",
+      providerLabel: account ? providerTitle(account.provider) : cloudRepository ? providerTitle(cloudRepository.provider) : repo.provider ? providerTitle(repo.provider) : mapping === "local" ? "Local" : "Remote",
       accountLabel: account?.username || account?.email || account?.name || (mapping === "needs-setup" ? "Choose account" : "Local only"),
       branchLabel: cloudRepository?.defaultBranch || "Detect on open",
       syncLabel: cloudRepository ? "Remote linked" : mapping === "needs-setup" ? "Mapping required" : "Local only",

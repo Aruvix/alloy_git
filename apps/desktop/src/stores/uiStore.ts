@@ -44,11 +44,12 @@ function parseTheme(v: string | null): ThemeName {
 export const useUiStore = defineStore("ui", () => {
   const sidebarCollapsed = ref(false);
   const diffPanelWidth = ref(60);
-  const notification = ref<{ type: "info" | "success" | "error" | "warning"; message: string } | null>(null);
+  const notification = ref<{ type: "info" | "success" | "error" | "warning"; message: string; id: number } | null>(null);
   const repositoryScope = ref<RepositoryScope>({ type: "all" });
   const addRepoModalOpen = ref(false);
   const addRepoModalFlow = ref<AddRepoFlow>(null);
   let notifTimer: ReturnType<typeof setTimeout> | null = null;
+  let notifSeq = 0;
 
   const themeMode = ref<ThemeMode>(parseMode(localStorage.getItem("themeMode")));
   const themeName = ref<ThemeName>(parseTheme(localStorage.getItem("themeName")));
@@ -82,10 +83,15 @@ export const useUiStore = defineStore("ui", () => {
     localStorage.setItem("historyFileListWidth", String(historyFileListWidth.value));
   });
 
-  function notify(type: "info" | "success" | "error" | "warning", message: string, durationMs = 3500) {
-    notification.value = { type, message };
+  function notify(type: "info" | "success" | "error" | "warning", message: string, durationMs?: number) {
+    const id = ++notifSeq;
+    notification.value = { type, message, id };
     if (notifTimer) clearTimeout(notifTimer);
-    notifTimer = setTimeout(() => { notification.value = null; }, durationMs);
+    // Errors linger longer so users can read them; success/info dismiss quickly.
+    const ms = durationMs ?? (type === "error" ? 7000 : type === "warning" ? 5000 : 4000);
+    notifTimer = setTimeout(() => {
+      if (notification.value?.id === id) notification.value = null;
+    }, ms);
   }
 
   function clearNotification() {

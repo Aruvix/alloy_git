@@ -5,6 +5,7 @@ import { useRepoStore } from "../stores/repoStore.js";
 import { useGitStatusStore } from "../stores/gitStatusStore.js";
 import { useGitBranchStore } from "../stores/gitBranchStore.js";
 import { useUiStore } from "../stores/uiStore.js";
+import { useAppBootstrapStore } from "../stores/appBootstrapStore.js";
 import { gitApi } from "@alloy/git-core";
 import RepoNav from "../components/RepoNav.vue";
 import RepoToolbar from "../components/RepoToolbar.vue";
@@ -15,12 +16,14 @@ const repoStore = useRepoStore();
 const statusStore = useGitStatusStore();
 const branchStore = useGitBranchStore();
 const uiStore = useUiStore();
+const bootstrapStore = useAppBootstrapStore();
 const activeOperation = ref<"fetch" | "pull" | "push" | null>(null);
 
 const repoId = computed(() => route.params.repoId as string);
 const repo = computed(() => repoStore.repos.find((r) => r.id === repoId.value) ?? null);
 
 async function bootstrap(repoPath: string) {
+  await bootstrapStore.waitUntilReady();
   await Promise.all([statusStore.refresh(repoPath), branchStore.load(repoPath)]);
   statusStore.startPolling(repoPath);
 }
@@ -50,9 +53,20 @@ watch(repoId, async (newId) => {
 
 onUnmounted(() => statusStore.stopPolling());
 
+// Drain any in-flight git_status subprocess before starting a write operation.
+// Concurrent git processes against the same repo can cause .git/ lock contention.
+async function waitForStatusIdle() {
+  while (statusStore.loading) {
+    await new Promise<void>((r) => setTimeout(r, 30));
+  }
+}
+
 async function handleFetch() {
+  await bootstrapStore.waitUntilReady();
   if (!repo.value) return;
   if (activeOperation.value) return;
+  await waitForStatusIdle();
+  statusStore.stopPolling();
   activeOperation.value = "fetch";
   try {
     const result = await gitApi.fetch(repo.value.path);
@@ -63,12 +77,16 @@ async function handleFetch() {
     uiStore.notify("error", String(e));
   } finally {
     activeOperation.value = null;
+    if (repo.value) statusStore.startPolling(repo.value.path);
   }
 }
 
 async function handlePull() {
+  await bootstrapStore.waitUntilReady();
   if (!repo.value) return;
   if (activeOperation.value) return;
+  await waitForStatusIdle();
+  statusStore.stopPolling();
   activeOperation.value = "pull";
   try {
     const result = await gitApi.pull(repo.value.path);
@@ -79,22 +97,27 @@ async function handlePull() {
     uiStore.notify("error", String(e));
   } finally {
     activeOperation.value = null;
+    if (repo.value) statusStore.startPolling(repo.value.path);
   }
 }
 
 async function handlePush() {
+  await bootstrapStore.waitUntilReady();
   if (!repo.value) return;
   if (activeOperation.value) return;
+  await waitForStatusIdle();
+  statusStore.stopPolling();
   activeOperation.value = "push";
   try {
     const result = await gitApi.push(repo.value.path);
     if (result.code !== 0) throw new Error(result.stderr || result.stdout);
-    await statusStore.refresh(repo.value.path);
+    await Promise.all([statusStore.refresh(repo.value.path), branchStore.load(repo.value.path)]);
     uiStore.notify("success", "Pushed successfully");
   } catch (e) {
     uiStore.notify("error", String(e));
   } finally {
     activeOperation.value = null;
+    if (repo.value) statusStore.startPolling(repo.value.path);
   }
 }
 
