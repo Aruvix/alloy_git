@@ -7,6 +7,8 @@ import { useUiStore } from "../stores/uiStore.js";
 import { useGitStatusStore } from "../stores/gitStatusStore.js";
 import { groupRepositoriesByOwner, buildRepositoryViewModels } from "../utils/repoGrouping.js";
 
+defineProps<{ loading?: boolean }>();
+
 const router = useRouter();
 const route = useRoute();
 const repoStore = useRepoStore();
@@ -109,6 +111,29 @@ function groupEyebrow(kind: string) {
     </div>
 
     <template v-if="!uiStore.sidebarCollapsed">
+      <div v-if="loading" class="sidebar-loading">
+        <div class="skeleton search" />
+        <div class="skeleton-row">
+          <span class="skeleton icon" />
+          <span class="skeleton text wide" />
+          <span class="skeleton count" />
+        </div>
+        <div class="skeleton-row">
+          <span class="skeleton icon" />
+          <span class="skeleton text" />
+          <span class="skeleton count" />
+        </div>
+        <div class="skeleton-heading" />
+        <div v-for="i in 6" :key="i" class="skeleton-repo">
+          <span class="skeleton dot" />
+          <span>
+            <span class="skeleton text wide" />
+            <span class="skeleton text muted" />
+          </span>
+        </div>
+      </div>
+
+      <template v-else>
       <!-- Search -->
       <div class="sidebar-search-wrap">
         <input
@@ -197,6 +222,7 @@ function groupEyebrow(kind: string) {
           <button class="sidebar-empty-btn" @click="uiStore.openAddRepoModal()">Add Repository</button>
         </div>
       </div>
+      </template>
     </template>
   </aside>
 </template>
@@ -256,6 +282,75 @@ function groupEyebrow(kind: string) {
   justify-content: center;
 }
 .icon-btn:hover { color: var(--text); background: var(--surface-2); }
+
+.sidebar-loading {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skeleton {
+  display: inline-block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 180% 100%;
+  animation: shimmer 1.15s ease-in-out infinite;
+}
+.skeleton.search {
+  width: 100%;
+  height: 28px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+.skeleton-row,
+.skeleton-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+}
+.skeleton-repo span:last-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+.skeleton.icon {
+  width: 12px;
+  height: 12px;
+}
+.skeleton.dot {
+  width: 7px;
+  height: 7px;
+}
+.skeleton.text {
+  width: 82px;
+  height: 8px;
+}
+.skeleton.text.wide {
+  width: 132px;
+}
+.skeleton.text.muted {
+  width: 74px;
+  opacity: 0.7;
+}
+.skeleton.count {
+  width: 18px;
+  height: 14px;
+  margin-left: auto;
+}
+.skeleton-heading {
+  width: 92px;
+  height: 9px;
+  margin: 12px 8px 2px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+@keyframes shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -80% 0; }
+}
 
 /* ── Search ── */
 .sidebar-search-wrap {

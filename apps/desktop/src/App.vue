@@ -21,6 +21,7 @@ const uiStore = useUiStore();
 const paletteOpen = ref(false);
 const paletteQuery = ref("");
 const fetchingAll = ref(false);
+const bootstrapping = ref(true);
 
 onMounted(async () => {
   uiStore.applyTheme();
@@ -28,6 +29,8 @@ onMounted(async () => {
     await Promise.all([repoStore.load(), accountStore.load()]);
   } catch {
     uiStore.notify("warning", "Repository data is unavailable in this browser preview. Open the Tauri app for live repository data.");
+  } finally {
+    bootstrapping.value = false;
   }
   window.addEventListener("keydown", handleKeydown);
 });
@@ -162,10 +165,7 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
     <header class="top-bar">
       <div class="top-bar-left">
         <span class="app-logo">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <polygon points="10,2 18,6 18,14 10,18 2,14 2,6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-            <polygon points="10,6 14,8 14,12 10,14 6,12 6,8" fill="currentColor" opacity="0.7"/>
-          </svg>
+          <img class="app-logo-img" src="/alloy-logo.png" alt="" />
           Alloy Git
         </span>
 
@@ -174,12 +174,16 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
             v-model="selectedAccountId"
             class="account-switcher"
             title="Switch account scope"
+            :disabled="bootstrapping"
           >
-            <option value="all">All Accounts</option>
-            <option v-for="account in accountStore.accounts" :key="account.id" :value="account.id">
-              {{ account.name }}{{ account.username ? ` - ${account.username}` : "" }}
-            </option>
-            <option value="local">Local Only</option>
+            <option v-if="bootstrapping" value="all">Loading accounts…</option>
+            <template v-else>
+              <option value="all">All Accounts</option>
+              <option v-for="account in accountStore.accounts" :key="account.id" :value="account.id">
+                {{ account.name }}{{ account.username ? ` - ${account.username}` : "" }}
+              </option>
+              <option value="local">Local Only</option>
+            </template>
           </select>
         </div>
       </div>
@@ -225,7 +229,7 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
 
     <!-- ── Body: Sidebar + Main ─────────────────────────────────────────── -->
     <div class="app-body">
-      <AppSidebar />
+      <AppSidebar :loading="bootstrapping" />
       <ResizableSplitter
         v-if="!uiStore.sidebarCollapsed"
         :min="200"
@@ -233,7 +237,16 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
         @resize-end="uiStore.sidebarWidth = $event"
       />
       <main class="app-main">
-        <RouterView />
+        <div v-if="bootstrapping" class="bootstrap-state">
+          <div class="bootstrap-card">
+            <span class="bootstrap-spinner" />
+            <div>
+              <h2>Loading workspace</h2>
+              <p>Reading accounts, repositories, and workspace settings…</p>
+            </div>
+          </div>
+        </div>
+        <RouterView v-else />
       </main>
     </div>
 
@@ -325,10 +338,17 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
   height: var(--top-bar-height);
   font-size: 13px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text);
   letter-spacing: -0.02em;
   border-right: 1px solid var(--border);
   flex-shrink: 0;
+}
+.app-logo-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .account-switcher-wrap {
@@ -415,6 +435,11 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
 }
 .top-icon-btn:hover { background: var(--surface-2); color: var(--text); }
 
+.account-switcher:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 /* ── App Body ── */
 .app-body {
   flex: 1;
@@ -429,6 +454,43 @@ async function runCommand(command: { run: () => unknown | Promise<unknown> }) {
   flex-direction: column;
   overflow: hidden;
 }
+.bootstrap-state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background: var(--surface-0);
+}
+.bootstrap-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 300px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+.bootstrap-card h2 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+}
+.bootstrap-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.bootstrap-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Command Palette ── */
 .palette-backdrop {
