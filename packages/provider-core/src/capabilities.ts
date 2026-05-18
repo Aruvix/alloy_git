@@ -1,0 +1,123 @@
+import type { GitCredentialType, GitProvider } from "@alloy/git-core";
+import type { GitProviderCapabilities } from "./types.js";
+
+const cloudAuthTypes: GitCredentialType[] = ["pat", "oauth", "ssh", "system"];
+const tokenAuthTypes: GitCredentialType[] = ["pat", "oauth"];
+const selfHostedAuthTypes: GitCredentialType[] = ["pat", "oauth", "ssh"];
+
+export const PROVIDER_CAPABILITIES: Record<GitProvider, GitProviderCapabilities> = {
+  github: {
+    provider: "github",
+    label: "GitHub",
+    defaultRemoteBaseUrl: "https://github.com",
+    supportsSelfHosted: false,
+    supportsRepositoryDiscovery: true,
+    authTypes: cloudAuthTypes,
+    requiredScopes: ["repo or metadata:read"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: false,
+  },
+  "github-enterprise": {
+    provider: "github-enterprise",
+    label: "GitHub Enterprise",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["repo or metadata:read"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  gitlab: {
+    provider: "gitlab",
+    label: "GitLab",
+    defaultRemoteBaseUrl: "https://gitlab.com",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["api or read_api/read_repository"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: false,
+  },
+  bitbucket: {
+    provider: "bitbucket",
+    label: "Bitbucket",
+    defaultRemoteBaseUrl: "https://bitbucket.org",
+    supportsSelfHosted: false,
+    supportsRepositoryDiscovery: true,
+    authTypes: tokenAuthTypes,
+    requiredScopes: ["repository", "workspace"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: false,
+  },
+  "bitbucket-server": {
+    provider: "bitbucket-server",
+    label: "Bitbucket Data Center",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["repository read"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  "azure-devops": {
+    provider: "azure-devops",
+    label: "Azure DevOps",
+    defaultRemoteBaseUrl: "https://dev.azure.com/{organization}",
+    supportsSelfHosted: false,
+    supportsRepositoryDiscovery: true,
+    authTypes: tokenAuthTypes,
+    requiredScopes: ["vso.code"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  "azure-devops-server": {
+    provider: "azure-devops-server",
+    label: "Azure DevOps Server",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["Code read"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  gitea: {
+    provider: "gitea",
+    label: "Gitea",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["repository"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  forgejo: {
+    provider: "forgejo",
+    label: "Forgejo",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["repository"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+  custom: {
+    provider: "custom",
+    label: "Custom Git Server",
+    defaultRemoteBaseUrl: "",
+    supportsSelfHosted: true,
+    supportsRepositoryDiscovery: true,
+    authTypes: selfHostedAuthTypes,
+    requiredScopes: ["GitLab-compatible API token"],
+    cloneUrlPreference: "https",
+    serverUrlRequired: true,
+  },
+};
+
+export function getProviderCapabilities(provider: GitProvider): GitProviderCapabilities {
+  return PROVIDER_CAPABILITIES[provider];
+}

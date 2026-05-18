@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="default">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/alloy.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alloy Git</title>
+    <script>
+      // Restore saved theme before first paint — prevents flash of unstyled content
+      (function () {
+        var theme = localStorage.getItem('themeName') || 'default';
+        var mode = localStorage.getItem('themeMode');
+        document.documentElement.dataset.theme = theme;
+        if (mode && mode !== 'system') document.documentElement.dataset.mode = mode;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
